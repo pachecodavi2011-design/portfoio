@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   :root{
     --ink:#1c1a17;
@@ -396,8 +397,10 @@
 (function(){
   "use strict";
 
-  var STORAGE_KEY = "portfolio-projects";
-  var storageAvailable = !!(window.storage && typeof window.storage.get === "function");
+  var SUPABASE_URL = "https://rnhrfkmoreryxpgpyoci.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJuaHJma21vcmVyeXhwZ3B5b2NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1MTExODEsImV4cCI6MjA5ODA4NzE4MX0.V61gP0V9WC7X-xpim7rjIrwgB0mYfWbAwxgJ0nzYoWs";
+  var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var TABLE_NAME = "projects";
 
   var state = {
     projects: [],
@@ -505,25 +508,66 @@
   /* ---------------- storage ---------------- */
 
   function loadProjects(){
-    if (!storageAvailable) return Promise.resolve([]);
-    return window.storage.get(STORAGE_KEY, false).then(function(res){
-      if (res && res.value){
-        try{ return JSON.parse(res.value); }catch(e){ return []; }
-      }
-      return [];
-    }).catch(function(){ return []; });
+    return supabase
+      .from(TABLE_NAME)
+      .select("*")
+      .then(function(res){
+        if (res.error){
+          console.error(res.error);
+          showToast("Não foi possível carregar os projetos do Supabase.", true);
+          return [];
+        }
+        return (res.data || []).map(function(row){
+          return {
+            id: row.id,
+            name: row.name,
+            url: row.url,
+            description: row.description,
+            cover: row.cover,
+            createdAt: row.created_at
+          };
+        });
+      })
+      .catch(function(err){
+        console.error(err);
+        showToast("Não foi possível conectar ao Supabase.", true);
+        return [];
+      });
   }
 
   function persistProjects(){
-    if (!storageAvailable){
-      showToast("Este arquivo precisa estar aberto no Claude para salvar.", true);
-      return Promise.resolve(false);
-    }
-    return window.storage.set(STORAGE_KEY, JSON.stringify(state.projects), false).then(function(result){
-      if (!result) throw new Error("save returned null");
+    var rows = state.projects.map(function(p){
+      return {
+        id: p.id,
+        name: p.name,
+        url: p.url,
+        description: p.description,
+        cover: p.cover,
+        created_at: p.createdAt
+      };
+    });
+
+    var upsertPromise = rows.length
+      ? supabase.from(TABLE_NAME).upsert(rows)
+      : Promise.resolve({ error: null });
+
+    return Promise.resolve(upsertPromise).then(function(res){
+      if (res.error) throw res.error;
       return true;
-    }).catch(function(){
+    }).catch(function(err){
+      console.error(err);
       showToast("Não foi possível salvar. Tente uma capa menor ou um link de imagem.", true);
+      return false;
+    });
+  }
+
+  function deleteProjectRemote(id){
+    return supabase.from(TABLE_NAME).delete().eq("id", id).then(function(res){
+      if (res.error) throw res.error;
+      return true;
+    }).catch(function(err){
+      console.error(err);
+      showToast("Não foi possível remover do Supabase.", true);
       return false;
     });
   }
@@ -866,7 +910,7 @@
     state.projects = state.projects.filter(function(x){ return x.id !== id; });
     closeConfirm();
     render();
-    persistProjects().then(function(ok){ if (ok) showToast("Projeto removido."); });
+    deleteProjectRemote(id).then(function(ok){ if (ok) showToast("Projeto removido."); });
   });
 
   /* ---------------- search / sort ---------------- */
